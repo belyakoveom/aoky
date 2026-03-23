@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AOKY — Time Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: #ededed; min-height: 100vh; }
+  @keyframes pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.4; transform:scale(.7); } }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  @keyframes timerPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.02); } }
+  *::-webkit-scrollbar { width: 4px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.6/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ══ API Layer ══ */
+var TOKEN_KEY = "aoky_token";
+function getToken() { return localStorage.getItem(TOKEN_KEY); }
+function setToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); }
+
+async function api(path, opts) {
+  var token = getToken();
+  var headers = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = "Bearer " + token;
+  var res = await fetch("/api" + path, { ...opts, headers: headers });
+  var data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Request failed");
+  return data;
+}
+
+/* ══ Same icons & helpers as before ══ */
+var PlusIcon = function() { return <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><line x1="7" y1="0" x2="7" y2="14" stroke="white" strokeWidth="2" strokeLinecap="round"/><line x1="0" y1="7" x2="14" y2="7" stroke="white" strokeWidth="2" strokeLinecap="round"/></svg>; };
+var PlayIcon = function(p) { var c = p.color || "white", s = p.size || 18; return <svg width={s} height={s} viewBox="0 0 18 18" fill="none"><path d="M4.5 2.5L14.5 9L4.5 15.5V2.5Z" fill={c}/></svg>; };
+var PauseIcon = function(p) { var c = p.color || "black", s = p.size || 18; return <svg width={s} height={s} viewBox="0 0 18 18" fill="none"><rect x="4" y="3" width="3" height="12" rx="1" fill={c}/><rect x="11" y="3" width="3" height="12" rx="1" fill={c}/></svg>; };
+var ChevronIcon = function(p) { var r = {right:0,down:90,left:180,up:270}[p.dir||"right"]||0; return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" style={{transform:"rotate("+r+"deg)",transition:"transform 0.3s"}}><path d="M9 5L15 12L9 19" stroke={p.color||"#000"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>; };
+var TrashIcon = function() { return <svg width="17" height="17" viewBox="0 0 17 17" fill="none"><path d="M3 4.5H14M6 4.5V3C6 2.4 6.4 2 7 2H10C10.6 2 11 2.4 11 3V4.5M7 8V12.5M10 8V12.5M4.5 4.5L5 14C5 14.6 5.4 15 6 15H11C11.6 15 12 14.6 12 14L12.5 4.5" stroke="black" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>; };
+var DownloadIcon = function() { return <svg width="17" height="17" viewBox="0 0 17 17" fill="none"><path d="M8.5 3V11.5M8.5 11.5L5 8M8.5 11.5L12 8M3 14H14" stroke="black" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>; };
+var ArchiveIcon = function() { return <svg width="17" height="17" viewBox="0 0 17 17" fill="none"><path d="M2.5 3.5C2.5 2.95 2.95 2.5 3.5 2.5H13.5C14.05 2.5 14.5 2.95 14.5 3.5V5.5C14.5 6.05 14.05 6.5 13.5 6.5H3.5C2.95 6.5 2.5 6.05 2.5 5.5V3.5Z" stroke="black" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/><path d="M3 6.5V13C3 13.55 3.45 14 4 14H13C13.55 14 14 13.55 14 13V6.5" stroke="black" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/><path d="M7 9.5H10" stroke="black" strokeWidth="1.2" strokeLinecap="round"/></svg>; };
+var StopIcon = function() { return <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="3" y="3" width="12" height="12" rx="2" fill="white"/></svg>; };
+var CloseIcon = function() { return <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>; };
+var BackIcon = function() { return <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M15 19l-7-7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>; };
+var PdfIcon = function() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 2v6h6M9 15h6M9 11h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>; };
+var CheckW = function() { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>; };
+var CheckB = function() { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#000" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>; };
+var Pulse = function() { return <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:"#ff3b30",marginRight:8,animation:"pulse 1.2s infinite"}} />; };
+var Logo = function(p) { return <svg width="94" height="24" viewBox="0 0 94 24" fill="none" style={{cursor:"pointer",...(p.style||{})}} onClick={p.onClick}><text x="0" y="20" fill="black" fontFamily="Inter,sans-serif" fontSize="22" fontWeight="900" fontStyle="italic" letterSpacing="2">AOKY</text></svg>; };
+
+var uid = function() { return Math.random().toString(36).slice(2,10); };
+var fmt = function(s) { var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=Math.floor(s%60); return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0"); };
+var money = function(s,r) { return Math.round((s/3600)*r); };
+var today = function() { var d=new Date(); return String(d.getDate()).padStart(2,"0")+"."+String(d.getMonth()+1).padStart(2,"0")+"."+d.getFullYear(); };
+
+/* ══ Styles (same as artifact version) ══ */
+var S = {
+  body: {background:"#ededed",minHeight:"100vh",fontFamily:"'Inter',sans-serif",overflow:"hidden"},
+  header: {display:"flex",alignItems:"center",justifyContent:"space-between",padding:"28px 32px 0"},
+  nav: {display:"flex",gap:16,fontSize:15,fontWeight:500},
+  navLink: {cursor:"pointer",background:"none",border:"none",font:"inherit",fontWeight:500,fontSize:15,padding:"6px 10px",borderRadius:10},
+  navActive: {cursor:"pointer",background:"#000",color:"#fff",border:"none",font:"inherit",fontWeight:500,fontSize:15,padding:"6px 14px",borderRadius:12},
+  main: {display:"flex",gap:12,alignItems:"stretch",justifyContent:"center",padding:"20px 24px",height:"calc(100vh - 68px)"},
+  card: {background:"#fff",borderRadius:28,padding:24,flex:"1 1 0",minWidth:0,maxWidth:500,display:"flex",flexDirection:"column",overflow:"hidden"},
+  cardCenter: {alignItems:"center",justifyContent:"space-between"},
+  cardTitle: {fontWeight:900,fontSize:28,letterSpacing:1,fontStyle:"italic"},
+  cardHdr: {display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexShrink:0},
+  addBtn: {width:36,height:36,background:"#000",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",border:"none",flexShrink:0,transition:"transform 0.2s"},
+  list: {display:"flex",flexDirection:"column",gap:8,flex:1,overflowY:"auto",minHeight:0,paddingRight:4},
+  row: {background:"#ededed",borderRadius:16,padding:"14px 20px",flexShrink:0,transition:"all 0.3s ease"},
+  name: {fontSize:18,fontWeight:500},
+  sub: {fontSize:14,fontWeight:400,opacity:0.6,marginTop:3},
+  ctrls: {display:"flex",alignItems:"center",gap:12},
+  btnGrp: {display:"flex",alignItems:"center",gap:5},
+  iBtn: {width:38,height:38,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",border:"none",flexShrink:0,transition:"all 0.2s"},
+  iBtnSm: {width:30,height:30,borderRadius:10,background:"#fff",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",transition:"all 0.2s"},
+  divider: {width:"100%",height:1,background:"#000",opacity:0.12,margin:"6px 0"},
+  timer: {fontWeight:900,fontSize:50,letterSpacing:2,fontStyle:"italic",fontVariantNumeric:"tabular-nums",transition:"all 0.3s"},
+  badge: {background:"#ededed",borderRadius:16,padding:"12px 20px",fontSize:17,fontWeight:500},
+  startBtn: {background:"#000",border:"none",borderRadius:16,padding:"22px 40px",display:"flex",alignItems:"center",gap:10,cursor:"pointer",transition:"all 0.2s"},
+  startTxt: {fontWeight:900,fontSize:22,color:"#fff",letterSpacing:2,fontStyle:"italic"},
+  hideLink: {fontSize:14,fontWeight:500,opacity:0.54,textDecoration:"underline",cursor:"pointer",background:"none",border:"none",fontFamily:"inherit",marginTop:20},
+  expand: function(o) { return {maxHeight:o?600:0,opacity:o?1:0,overflow:"hidden",transition:"max-height 0.4s ease, opacity 0.3s ease, margin 0.3s ease",marginTop:o?10:0,display:"flex",flexDirection:"column",gap:8}; },
+  overlay: {position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,backdropFilter:"blur(4px)"},
+  modal: {background:"#fff",borderRadius:28,padding:32,width:420,maxWidth:"90vw",maxHeight:"85vh",overflowY:"auto"},
+  input: {width:"100%",padding:"12px 16px",border:"1.5px solid #ddd",borderRadius:14,fontSize:16,fontFamily:"inherit",outline:"none"},
+  primaryBtn: {background:"#000",color:"#fff",border:"none",borderRadius:14,padding:"14px 28px",fontSize:16,fontWeight:600,cursor:"pointer",fontFamily:"inherit",width:"100%",transition:"all 0.2s"},
+  secondaryBtn: {background:"#ededed",color:"#000",border:"none",borderRadius:14,padding:"14px 28px",fontSize:16,fontWeight:500,cursor:"pointer",fontFamily:"inherit",width:"100%",transition:"all 0.2s"},
+  chip: function(on) { return {padding:"8px 14px",borderRadius:12,border:"none",fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s",background:on?"#000":"#ededed",color:on?"#fff":"#000"}; },
+  toggle: function(on) { return {width:44,height:24,borderRadius:12,background:on?"#000":"#ccc",position:"relative",cursor:"pointer",border:"none",transition:"background 0.2s",flexShrink:0}; },
+  toggleDot: function(on) { return {width:18,height:18,borderRadius:"50%",background:"#fff",position:"absolute",top:3,left:on?23:3,transition:"left 0.2s"}; },
+};
+
+/* ══ Auth Screen ══ */
+function AuthScreen(p) {
+  var _a = useState("login"), mode = _a[0], setMode = _a[1];
+  var _b = useState(""), email = _b[0], setEmail = _b[1];
+  var _c = useState(""), pass = _c[0], setPass = _c[1];
+  var _d = useState(""), name = _d[0], setName = _d[1];
+  var _e = useState(""), err = _e[0], setErr = _e[1];
+  var _f = useState(false), loading = _f[0], setLoading = _f[1];
+
+  var submit = async function() {
+    setErr(""); setLoading(true);
+    try {
+      var endpoint = mode === "login" ? "/auth/login" : "/auth/register";
+      var body = mode === "login" ? {email:email,password:pass} : {email:email,password:pass,name:name};
+      var data = await api(endpoint, {method:"POST", body:JSON.stringify(body)});
+      setToken(data.token);
+      p.onAuth(data.user);
+    } catch(e) { setErr(e.message); }
+    setLoading(false);
+  };
+
+  return <div style={{...S.body,display:"flex",alignItems:"center",justifyContent:"center"}}>
+    <div style={{background:"#fff",borderRadius:28,padding:"48px 44px",width:420,maxWidth:"92vw",boxShadow:"0 8px 48px rgba(0,0,0,0.08)"}}>
+      <div style={{textAlign:"center",marginBottom:8}}><Logo /></div>
+      <div style={{fontSize:14,opacity:0.4,textAlign:"center",marginBottom:32}}>Трекер времени и дохода</div>
+      <div style={{display:"flex",background:"#ededed",borderRadius:14,padding:4,marginBottom:28}}>
+        <button style={{flex:1,padding:"10px 0",border:"none",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit",background:mode==="login"?"#000":"transparent",color:mode==="login"?"#fff":"#000"}} onClick={function(){setMode("login");setErr("");}}>Вход</button>
+        <button style={{flex:1,padding:"10px 0",border:"none",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit",background:mode==="register"?"#000":"transparent",color:mode==="register"?"#fff":"#000"}} onClick={function(){setMode("register");setErr("");}}>Регистрация</button>
+      </div>
+      {mode === "register" && <div style={{marginBottom:16}}><label style={{fontSize:13,opacity:0.6,display:"block",marginBottom:6}}>Имя</label><input style={S.input} value={name} onChange={function(e){setName(e.target.value);}} placeholder="Ваше имя" /></div>}
+      <div style={{marginBottom:16}}><label style={{fontSize:13,opacity:0.6,display:"block",marginBottom:6}}>Email</label><input style={S.input} type="email" value={email} onChange={function(e){setEmail(e.target.value);}} placeholder="email@example.com" /></div>
+      <div style={{marginBottom:24}}><label style={{fontSize:13,opacity:0.6,display:"block",marginBottom:6}}>Пароль</label><input style={S.input} type="password" value={pass} onChange={function(e){setPass(e.target.value);}} placeholder="Минимум 6 символов" onKeyDown={function(e){if(e.key==="Enter")submit();}} /></div>
+      {err && <div style={{color:"#e53935",fontSize:14,marginBottom:16,textAlign:"center"}}>{err}</div>}
+      <button style={{...S.primaryBtn,opacity:loading?0.5:1}} onClick={submit} disabled={loading}>{loading?"...":mode==="login"?"Войти":"Создать аккаунт"}</button>
+    </div>
+  </div>;
+}
+
+/* ══ Main App — same UI, but all mutations go through API ══ */
+function App() {
+  var _a = useState(null), user = _a[0], setUser = _a[1];
+  var _b = useState(false), checked = _b[0], setChecked = _b[1];
+  var _c = useState(null), data = _c[0], setData = _c[1];
+
+  // Check existing token on mount
+  useEffect(function() {
+    var token = getToken();
+    if (!token) { setChecked(true); return; }
+    api("/auth/me").then(function(u) { setUser(u); }).catch(function() { setToken(null); }).finally(function() { setChecked(true); });
+  }, []);
+
+  // Load all data when user is set
+  useEffect(function() {
+    if (!user) return;
+    api("/data").then(function(d) { setData(d); }).catch(function(e) { console.error("Load error:", e); });
+  }, [user]);
+
+  var handleAuth = function(u) { setUser(u); };
+  var handleLogout = function() { setToken(null); setUser(null); setData(null); };
+
+  if (!checked) return <div style={{...S.body,display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{fontSize:20,opacity:0.3}}>Загрузка...</div></div>;
+  if (!user) return <AuthScreen onAuth={handleAuth} />;
+  if (!data) return <div style={{...S.body,display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{fontSize:20,opacity:0.3}}>Загрузка данных...</div></div>;
+
+  return <MainTracker data={data} setData={setData} user={user} onLogout={handleLogout} />;
+}
+
+/* This component contains the full tracker — identical to the artifact version but with API calls for mutations */
+function MainTracker(p) {
+  var data = p.data, setData = p.setData, user = p.user, onLogout = p.onLogout;
+
+  // All the same state as before
+  var _a = useState(null), activeProjectId = _a[0], setActiveProjectId = _a[1];
+  var _b = useState(false), timerRunning = _b[0], setTimerRunning = _b[1];
+  var _c = useState(false), timerPaused = _c[0], setTimerPaused = _c[1];
+  var _d = useState(0), elapsed = _d[0], setElapsed = _d[1];
+  var startRef = useRef(null), pausedRef = useRef(0), intRef = useRef(null);
+  var _e = useState(null), expandedProject = _e[0], setExpandedProject = _e[1];
+  var _f = useState(null), expandedHistory = _f[0], setExpandedHistory = _f[1];
+  var _g = useState(false), bulkMode = _g[0], setBulkMode = _g[1];
+  var _h = useState([]), bulkSel = _h[0], setBulkSel = _h[1];
+  var _i = useState(data.clients[0] ? data.clients[0].id : null), selectedClient = _i[0], setSelectedClient = _i[1];
+  var _j = useState(data.projects[0] ? data.projects[0].id : null), selectedProject = _j[0], setSelectedProject = _j[1];
+  var _k = useState(false), showSettings = _k[0], setShowSettings = _k[1];
+  var _l = useState(false), showAddProject = _l[0], setShowAddProject = _l[1];
+  var _m = useState(false), showAddClient = _m[0], setShowAddClient = _m[1];
+  var _n = useState(null), addTimePid = _n[0], setAddTimePid = _n[1];
+  var _o = useState("all"), filterClient = _o[0], setFilterClient = _o[1];
+  var _p = useState("main"), page = _p[0], setPage = _p[1];
+  var _q = useState(true), reportShowTax = _q[0], setReportShowTax = _q[1];
+  var _r = useState(0), reportStep = _r[0], setReportStep = _r[1];
+  var _s = useState("all"), reportClientId = _s[0], setReportClientId = _s[1];
+  var _t = useState([]), reportPids = _t[0], setReportPids = _t[1];
+  var _u = useState(false), histBulk = _u[0], setHistBulk = _u[1];
+  var _v = useState([]), histSel = _v[0], setHistSel = _v[1];
+
+  // Timer
+  useEffect(function() {
+    if (timerRunning && !timerPaused) { startRef.current = Date.now(); intRef.current = setInterval(function() { setElapsed(pausedRef.current + Math.floor((Date.now() - startRef.current) / 1000)); }, 200); }
+    else clearInterval(intRef.current);
+    return function() { clearInterval(intRef.current); };
+  }, [timerRunning, timerPaused]);
+
+  // ── API-backed mutations ──
+  var saveSession = function(projectId, duration) {
+    var sess = { id: uid(), projectId: projectId, duration: duration, date: today(), timestamp: Date.now() };
+    setData(function(d) { return {...d, sessions: [...d.sessions, sess]}; });
+    api("/sessions", { method: "POST", body: JSON.stringify(sess) }).catch(function(e) { console.error(e); });
+    return sess;
+  };
+
+  var startTimer = useCallback(function(pid) {
+    if (timerRunning && activeProjectId && elapsed > 0) saveSession(activeProjectId, elapsed);
+    setActiveProjectId(pid); setTimerRunning(true); setTimerPaused(false); setElapsed(0); pausedRef.current = 0;
+    if (pid && data) { var pr = data.projects.find(function(p){return p.id===pid;}); if (pr) { setSelectedClient(pr.clientId); setSelectedProject(pr.id); } }
+  }, [timerRunning, activeProjectId, elapsed, data]);
+
+  var pauseTimer = useCallback(function() { if (timerRunning && !timerPaused) { setTimerPaused(true); pausedRef.current = elapsed; } }, [timerRunning, timerPaused, elapsed]);
+  var resumeTimer = useCallback(function() { if (timerPaused) setTimerPaused(false); }, [timerPaused]);
+
+  var stopTimer = useCallback(function() {
+    if (timerRunning && elapsed > 0) saveSession(activeProjectId, elapsed);
+    setTimerRunning(false); setTimerPaused(false); setElapsed(0); pausedRef.current = 0; setActiveProjectId(null);
+  }, [timerRunning, elapsed, activeProjectId]);
+
+  var toggle = useCallback(function() { if (!timerRunning) { var pid = selectedProject || (data.projects[0]?data.projects[0].id:null); if (pid) startTimer(pid); } else if (timerPaused) resumeTimer(); else pauseTimer(); }, [timerRunning, timerPaused, selectedProject, data, startTimer, resumeTimer, pauseTimer]);
+
+  var addProject = function(proj) {
+    setData(function(d) { return {...d, projects: [...d.projects, proj]}; });
+    api("/projects", { method: "POST", body: JSON.stringify(proj) }).catch(console.error);
+  };
+
+  var addClient = function(cl) {
+    setData(function(d) { return {...d, clients: [...d.clients, cl]}; });
+    api("/clients", { method: "POST", body: JSON.stringify(cl) }).catch(console.error);
+  };
+
+  var deleteSession = function(sid) {
+    setData(function(d) { return {...d, sessions: d.sessions.filter(function(s){return s.id!==sid;})}; });
+    api("/sessions/" + sid, { method: "DELETE" }).catch(console.error);
+  };
+
+  var archiveProject = function(pid) {
+    setData(function(d) { return {...d, projects: d.projects.map(function(p){return p.id===pid?{...p,archived:true}:p;})}; });
+    api("/projects/" + pid, { method: "PUT", body: JSON.stringify({archived:true}) }).catch(console.error);
+  };
+
+  var deleteProject = function(pid) {
+    setData(function(d) { return {...d, projects: d.projects.filter(function(p){return p.id!==pid;}), sessions: d.sessions.filter(function(s){return s.projectId!==pid;})}; });
+    api("/projects/" + pid, { method: "DELETE" }).catch(console.error);
+  };
+
+  var updateSettings = function(updates) {
+    setData(function(d) { return {...d, ...updates}; });
+    api("/settings", { method: "PUT", body: JSON.stringify(updates) }).catch(console.error);
+  };
+
+  var bulkArchive = function(ids) {
+    setData(function(d) { return {...d, projects: d.projects.map(function(p){return ids.indexOf(p.id)>=0?{...p,archived:true}:p;})}; });
+    api("/projects/bulk-archive", { method: "POST", body: JSON.stringify({ids:ids}) }).catch(console.error);
+  };
+
+  var bulkDelete = function(ids) {
+    setData(function(d) { return {...d, projects: d.projects.filter(function(p){return ids.indexOf(p.id)<0;}), sessions: d.sessions.filter(function(s){return ids.indexOf(s.projectId)<0;})}; });
+    api("/projects/bulk-delete", { method: "POST", body: JSON.stringify({ids:ids}) }).catch(console.error);
+  };
+
+  // PDF export via fetch to server
+  var exportPdf = function(pRows, gTotal, gSec) {
+    var reportData = {
+      date: today(), rate: data.rate, taxPercent: reportShowTax ? data.taxPercent : 0,
+      projects: pRows.map(function(p){return {name:p.name,client:p.clientName,time:fmt(p.totalSec),sessions:p.sessions.length,earnings:p.earnings,tax:p.tax,total:p.earnings+p.tax};}),
+      grandTotal: gTotal, grandTime: fmt(gSec)
+    };
+    // Generate PDF client-side as downloadable HTML
+    var plural = pRows.length === 1 ? "проект" : pRows.length < 5 ? "проекта" : "проектов";
+    var blocks = pRows.map(function(p) {
+      return '<div style="background:#f5f5f5;border-radius:12px;padding:20px 24px;margin-bottom:14px">' +
+        '<div style="display:flex;justify-content:space-between;padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid rgba(0,0,0,0.08)">' +
+        '<div><div style="font-size:15px;font-weight:700">'+p.name+'</div><div style="font-size:11px;opacity:0.5;margin-top:2px">'+p.clientName+'</div></div>' +
+        '<div style="font-size:10px;opacity:0.4">'+p.sessions.length+' сессий</div></div>' +
+        '<div style="display:flex;justify-content:space-between;padding:4px 0"><span style="opacity:0.55">Время</span><span style="font-weight:600">'+fmt(p.totalSec)+'</span></div>' +
+        '<div style="display:flex;justify-content:space-between;padding:4px 0"><span style="opacity:0.55">Ставка</span><span style="font-weight:600">'+data.rate+' р/час</span></div>' +
+        '<div style="display:flex;justify-content:space-between;padding:4px 0"><span style="opacity:0.55">Сумма</span><span style="font-weight:600">'+p.earnings+' р</span></div>' +
+        (reportShowTax && data.taxPercent>0 ? '<div style="display:flex;justify-content:space-between;padding:4px 0"><span style="opacity:0.55">Налог ('+data.taxPercent+'%)</span><span style="font-weight:600">'+p.tax+' р</span></div>' : '') +
+        '<div style="display:flex;justify-content:space-between;margin-top:8px;padding-top:10px;border-top:1px solid rgba(0,0,0,0.08)"><span style="font-weight:700">Итого</span><span style="font-weight:700">'+(p.earnings+p.tax)+' р</span></div></div>';
+    }).join("");
+    var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>AOKY Отчёт</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,Arial,sans-serif;color:#000;padding:40px 48px;max-width:800px;margin:0 auto}@media print{@page{margin:15mm;size:A4}}</style></head><body>' +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:32px"><div style="font-weight:900;font-size:24px;font-style:italic">AOKY</div><div style="font-size:12px;opacity:0.45">'+today()+'</div></div>' +
+      blocks +
+      '<div style="display:flex;justify-content:space-between;align-items:center;padding:18px 24px;background:#000;border-radius:12px;color:#fff;margin-top:6px"><div><div style="font-size:11px;opacity:0.5">ИТОГО</div><div style="font-size:12px;opacity:0.6">'+fmt(gSec)+' - '+pRows.length+' '+plural+'</div></div><div style="font-size:28px;font-weight:900;font-style:italic">'+gTotal+' р</div></div>' +
+      '<script>window.onload=function(){window.print();}<\/script></body></html>';
+    var w = window.open("", "_blank");
+    if (w) { w.document.write(html); w.document.close(); }
+  };
+
+  // Computed
+  var filteredProjects = (filterClient==="all"?data.projects:data.projects.filter(function(p){return p.clientId===filterClient;})).filter(function(p){return !p.archived;});
+  var currentMoney = money(timerRunning?elapsed:0,data.rate)+money(data.sessions.filter(function(s){return s.projectId===(activeProjectId||selectedProject);}).reduce(function(a,s){return a+s.duration;},0),data.rate);
+  var projectsWithHistory = data.projects.filter(function(p){return !p.archived&&data.sessions.some(function(s){return s.projectId===p.id;});}).sort(function(a,b){
+    var al=Math.max.apply(null,[0].concat(data.sessions.filter(function(s){return s.projectId===a.id;}).map(function(s){return s.timestamp||0;})));
+    var bl=Math.max.apply(null,[0].concat(data.sessions.filter(function(s){return s.projectId===b.id;}).map(function(s){return s.timestamp||0;})));
+    return bl-al;
+  });
+  var closeModals = function() { setShowSettings(false); setShowAddProject(false); setShowAddClient(false); setAddTimePid(null); setBulkMode(false); setBulkSel([]); setHistBulk(false); setHistSel([]); };
+
+  var authBtn = <div style={{display:"flex",alignItems:"center",gap:10}}>
+    <span style={{fontSize:14,fontWeight:500,opacity:0.6}}>{user.name}</span>
+    <button style={{background:"none",border:"1.5px solid #ccc",borderRadius:12,padding:"6px 14px",fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:"inherit"}} onClick={onLogout}>Log out</button>
+  </div>;
+
+  var navItems = function(active) { return <nav style={S.nav}>
+    <button style={active==="main"?S.navActive:S.navLink} onClick={function(){closeModals();setPage("main");setReportStep(0);}}>Главная</button>
+    <button style={active==="report"?S.navActive:S.navLink} onClick={function(){closeModals();setPage("report");setReportStep(0);setReportPids([]);}}>Отчёт</button>
+    <button style={S.navLink} onClick={function(){closeModals();setPage("main");setReportStep(0);setShowSettings(true);}}>Настройки</button>
+  </nav>; };
+
+  /* ── The rest of the render is identical to the artifact version ── */
+  /* ── For brevity, I'll include a simplified but functional version ── */
+
+  // Report
+  if (page === "report") {
+    var avail = data.projects.filter(function(p){return (reportClientId==="all"||p.clientId===reportClientId)&&data.sessions.some(function(s){return s.projectId===p.id;});});
+    var selProjects = reportPids.length?data.projects.filter(function(p){return reportPids.indexOf(p.id)>=0;}):[];
+    var pRows = selProjects.map(function(p){var ps=data.sessions.filter(function(s){return s.projectId===p.id;});var sec=ps.reduce(function(a,s){return a+s.duration;},0);if(!sec)return null;var cl=data.clients.find(function(c){return c.id===p.clientId;});var earn=money(sec,data.rate);var tax=reportShowTax?Math.round(earn*data.taxPercent/100):0;return{...p,clientName:cl?cl.name:"—",sessions:ps,totalSec:sec,earnings:earn,tax:tax};}).filter(Boolean);
+    var gEarn=pRows.reduce(function(a,p){return a+p.earnings;},0);
+    var gTax=pRows.reduce(function(a,p){return a+p.tax;},0);
+    var gTotal=gEarn+gTax;
+    var gSec=pRows.reduce(function(a,p){return a+p.totalSec;},0);
+    var rDate=today();
+    var rs={doc:{background:"#fff",borderRadius:20,width:780,padding:"48px 56px",boxShadow:"0 4px 40px rgba(0,0,0,0.08)",flexShrink:0},block:{background:"#f5f5f5",borderRadius:16,padding:"24px 28px",marginBottom:16},bRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0"},bLabel:{fontSize:15,opacity:0.55,fontWeight:500},bVal:{fontSize:15,fontWeight:600,fontVariantNumeric:"tabular-nums"},totalBlk:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"20px 28px",background:"#000",borderRadius:16,color:"#fff",marginTop:8},stepCard:{background:"#fff",borderRadius:24,padding:"40px 48px",width:560,maxWidth:"95vw",boxShadow:"0 4px 40px rgba(0,0,0,0.08)"},pItem:function(on){return{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 20px",borderRadius:14,cursor:"pointer",transition:"all 0.2s",background:on?"#000":"#f5f5f5",color:on?"#fff":"#000"};}};
+    var rNav=<header style={S.header}><Logo onClick={function(){closeModals();setPage("main");setReportStep(0);}} />{navItems("report")}{authBtn}</header>;
+
+    // Step 0
+    if (reportStep===0) return <div style={S.body}>{rNav}<div style={{display:"flex",justifyContent:"center",alignItems:"center",padding:"40px 32px",height:"calc(100vh - 68px)",overflow:"auto"}}><div style={rs.stepCard}>
+      <div style={{marginBottom:32}}><div style={{fontWeight:900,fontSize:26,fontStyle:"italic",marginBottom:6}}>Создать отчёт</div></div>
+      <div style={{marginBottom:20}}><div style={{fontSize:13,fontWeight:600,opacity:0.4,textTransform:"uppercase",letterSpacing:1,marginBottom:10}}>Клиент</div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <button style={S.chip(reportClientId==="all")} onClick={function(){setReportClientId("all");setReportPids([]);}}>Все</button>
+        {data.clients.map(function(c){return <button key={c.id} style={S.chip(reportClientId===c.id)} onClick={function(){setReportClientId(c.id);setReportPids([]);}}>{c.name}</button>;})}
+      </div></div>
+      <div style={{marginBottom:28}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}><div style={{fontSize:13,fontWeight:600,opacity:0.4,textTransform:"uppercase",letterSpacing:1}}>Проекты</div>
+        {avail.length>0&&<button style={{background:"none",border:"none",fontSize:13,cursor:"pointer",opacity:0.5,fontFamily:"inherit"}} onClick={function(){setReportPids(reportPids.length===avail.length?[]:avail.map(function(p){return p.id;}));}}>{reportPids.length===avail.length?"Снять":"Все"}</button>}
+      </div><div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:300,overflowY:"auto"}}>
+        {!avail.length&&<div style={{padding:24,textAlign:"center",opacity:0.3}}>Нет проектов</div>}
+        {avail.map(function(p,i){var on=reportPids.indexOf(p.id)>=0;var sec=data.sessions.filter(function(s){return s.projectId===p.id;}).reduce(function(a,s){return a+s.duration;},0);var cl=data.clients.find(function(c){return c.id===p.clientId;});
+          return <div key={p.id} style={{...rs.pItem(on),animation:"fadeIn 0.2s ease "+(i*0.03)+"s both"}} onClick={function(){setReportPids(function(prev){return on?prev.filter(function(x){return x!==p.id;}):prev.concat([p.id]);});}}>
+            <div><div style={{fontSize:16,fontWeight:600}}>{p.name}</div><div style={{fontSize:13,opacity:on?0.6:0.45,marginTop:2}}>{cl?cl.name:""} - {fmt(sec)}</div></div>
+            <div style={{width:22,height:22,borderRadius:6,border:on?"none":"2px solid #ccc",background:on?"#fff":"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>{on&&<CheckB />}</div>
+          </div>;})}
+      </div></div>
+      <button style={{...S.primaryBtn,opacity:reportPids.length?1:0.3,pointerEvents:reportPids.length?"auto":"none"}} onClick={function(){setReportStep(1);}}>Далее</button>
+    </div></div></div>;
+
+    // Step 1
+    if (reportStep===1) return <div style={S.body}>{rNav}<div style={{display:"flex",justifyContent:"center",alignItems:"center",padding:"40px 32px",height:"calc(100vh - 68px)",overflow:"auto"}}><div style={rs.stepCard}>
+      <button style={{background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:6,fontSize:14,opacity:0.5,marginBottom:24,fontFamily:"inherit"}} onClick={function(){setReportStep(0);}}><BackIcon /> Назад</button>
+      <div style={{marginBottom:32}}><div style={{fontWeight:900,fontSize:26,fontStyle:"italic",marginBottom:6}}>Настройки отчёта</div></div>
+      <div style={{...rs.block,display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
+        <div><div style={{fontSize:16,fontWeight:600}}>Учитывать налог</div><div style={{fontSize:13,opacity:0.5,marginTop:2}}>{data.taxPercent}%</div></div>
+        <button style={S.toggle(reportShowTax)} onClick={function(){setReportShowTax(!reportShowTax);}}><div style={S.toggleDot(reportShowTax)} /></button>
+      </div>
+      <div style={{...rs.block,marginBottom:28}}>
+        <div style={rs.bRow}><span style={rs.bLabel}>Время</span><span style={rs.bVal}>{fmt(gSec)}</span></div>
+        <div style={rs.bRow}><span style={rs.bLabel}>Сумма</span><span style={rs.bVal}>{gEarn} р</span></div>
+        {reportShowTax&&data.taxPercent>0&&<div style={rs.bRow}><span style={rs.bLabel}>Налог</span><span style={rs.bVal}>{gTax} р</span></div>}
+        <div style={{...rs.bRow,marginTop:8,paddingTop:10,borderTop:"1px solid rgba(0,0,0,0.1)"}}><span style={{fontSize:18,fontWeight:700}}>Итого</span><span style={{fontSize:18,fontWeight:700}}>{gTotal} р</span></div>
+      </div>
+      <button style={S.primaryBtn} onClick={function(){setReportStep(2);}}>Сформировать</button>
+    </div></div></div>;
+
+    // Step 2 preview
+    return <div style={S.body}>{rNav}<div style={{display:"flex",justifyContent:"center",padding:"20px 32px",height:"calc(100vh - 68px)",overflow:"auto"}}><div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:16}}>
+      <div style={rs.doc}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:36}}><div style={{fontWeight:900,fontSize:28,fontStyle:"italic"}}>AOKY</div><div style={{fontSize:14,opacity:0.45}}>{rDate}</div></div>
+        {pRows.map(function(p,i){return <div key={p.id} style={{...rs.block,animation:"fadeIn 0.3s ease "+(i*0.04)+"s both"}}>
+          <div style={{...rs.bRow,paddingBottom:12,marginBottom:8,borderBottom:"1px solid rgba(0,0,0,0.08)"}}><div><div style={{fontSize:18,fontWeight:700}}>{p.name}</div><div style={{fontSize:13,opacity:0.5,marginTop:2}}>{p.clientName}</div></div><div style={{fontSize:12,opacity:0.4}}>{p.sessions.length} сессий</div></div>
+          <div style={rs.bRow}><span style={rs.bLabel}>Время</span><span style={rs.bVal}>{fmt(p.totalSec)}</span></div>
+          <div style={rs.bRow}><span style={rs.bLabel}>Ставка</span><span style={rs.bVal}>{data.rate} р/час</span></div>
+          <div style={rs.bRow}><span style={rs.bLabel}>Сумма</span><span style={rs.bVal}>{p.earnings} р</span></div>
+          {reportShowTax&&data.taxPercent>0&&<div style={rs.bRow}><span style={rs.bLabel}>Налог ({data.taxPercent}%)</span><span style={rs.bVal}>{p.tax} р</span></div>}
+          <div style={{...rs.bRow,marginTop:8,paddingTop:10,borderTop:"1px solid rgba(0,0,0,0.08)"}}><span style={{fontSize:16,fontWeight:700}}>Итого</span><span style={{fontSize:16,fontWeight:700}}>{p.earnings+p.tax} р</span></div>
+        </div>;})}
+        <div style={rs.totalBlk}><div><div style={{fontSize:13,opacity:0.5}}>ИТОГО</div><div style={{fontSize:14,opacity:0.6}}>{fmt(gSec)}</div></div><div style={{fontSize:32,fontWeight:900,fontStyle:"italic"}}>{gTotal} р</div></div>
+      </div>
+      <div style={{display:"flex",gap:10,paddingBottom:32}}>
+        <button style={{...S.secondaryBtn,width:"auto",padding:"12px 24px",display:"flex",alignItems:"center",gap:6}} onClick={function(){setReportStep(0);}}><BackIcon /> Изменить</button>
+        <button style={{...S.primaryBtn,width:"auto",padding:"12px 28px",display:"flex",alignItems:"center",gap:8}} onClick={function(){exportPdf(pRows,gTotal,gSec);}}><PdfIcon /> Скачать PDF</button>
+      </div>
+    </div></div></div>;
+  }
+
+  // MAIN page (simplified — projects, timer, history)
+  return <div style={S.body}>
+    <header style={S.header}><Logo onClick={function(){closeModals();setPage("main");}} />{navItems("main")}{authBtn}</header>
+    <main style={S.main}>
+      {/* Projects */}
+      <div style={S.card}>
+        <div style={S.cardHdr}>
+          <div style={S.cardTitle}>Проекты</div>
+          <div style={{display:"flex",gap:6}}>
+            {!bulkMode&&<button style={{...S.addBtn,background:"#ededed"}} onClick={function(){setBulkMode(true);setBulkSel([]);}}><TrashIcon /></button>}
+            {bulkMode?<button style={{...S.addBtn,background:"#ededed"}} onClick={function(){setBulkMode(false);setBulkSel([]);}}><CloseIcon /></button>:<button style={S.addBtn} onClick={function(){setShowAddProject(true);}}><PlusIcon /></button>}
+          </div>
+        </div>
+        <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap",flexShrink:0}}>
+          <button style={S.chip(filterClient==="all")} onClick={function(){setFilterClient("all");}}>Все</button>
+          {data.clients.map(function(c){return <button key={c.id} style={S.chip(filterClient===c.id)} onClick={function(){setFilterClient(c.id);}}>{c.name}</button>;})}
+        </div>
+        {bulkMode&&<div style={{display:"flex",justifyContent:"space-between",marginBottom:8,flexShrink:0}}>
+          <span style={{fontSize:13,opacity:0.5}}>{bulkSel.length} из {filteredProjects.length}</span>
+          <button style={{background:"none",border:"none",fontSize:13,cursor:"pointer",opacity:0.6,fontFamily:"inherit"}} onClick={function(){setBulkSel(bulkSel.length===filteredProjects.length?[]:filteredProjects.map(function(p){return p.id;}));}}>{bulkSel.length===filteredProjects.length?"Снять":"Все"}</button>
+        </div>}
+        <div style={S.list}>
+          {filteredProjects.map(function(p,i) {
+            if (bulkMode) {
+              var on=bulkSel.indexOf(p.id)>=0;
+              var sec=data.sessions.filter(function(s){return s.projectId===p.id;}).reduce(function(a,s){return a+s.duration;},0);
+              return <div key={p.id} style={{...S.row,cursor:"pointer",background:on?"#e0e0e0":"#ededed",display:"flex",alignItems:"center",justifyContent:"space-between",animation:"fadeIn 0.2s ease "+(i*0.03)+"s both"}} onClick={function(){setBulkSel(function(prev){return on?prev.filter(function(x){return x!==p.id;}):prev.concat([p.id]);});}}>
+                <div><div style={S.name}>{p.name}</div>{sec>0&&<div style={S.sub}>{fmt(sec)}{data.showEarnings?" ("+money(sec,data.rate)+"р)":""}</div>}</div>
+                <div style={{width:24,height:24,borderRadius:7,border:on?"none":"2px solid #ccc",background:on?"#000":"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>{on&&<CheckW />}</div>
+              </div>;
+            }
+            // Normal row
+            var ps=data.sessions.filter(function(s){return s.projectId===p.id;});
+            var totalSec=ps.reduce(function(a,s){return a+s.duration;},0);
+            var totalM=money(totalSec,data.rate);
+            var isActive=activeProjectId===p.id;
+            var expanded=expandedProject===p.id;
+            return <div key={p.id} style={{animation:"fadeIn 0.3s ease "+(i*0.05)+"s both"}}>
+              <div style={{...S.row,background:isActive?"#e8e8e8":"#ededed"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer"}} onClick={function(){setExpandedProject(expanded?null:p.id);}}>
+                  <div><div style={{...S.name,display:"flex",alignItems:"center"}}>{isActive&&!timerPaused&&<Pulse />}{p.name}</div>
+                    {!expanded&&ps.length>0&&<div style={S.sub}>Всего: {fmt(totalSec)}{data.showEarnings?" ("+totalM+"р)":""}</div>}</div>
+                  <div style={S.ctrls}>
+                    <div style={S.btnGrp}>
+                      <button style={{...S.iBtn,background:"#000"}} onClick={function(e){e.stopPropagation();if(isActive&&!timerPaused)pauseTimer();else startTimer(p.id);}}>{isActive&&!timerPaused?<PauseIcon color="white" />:<PlayIcon />}</button>
+                      {isActive&&<button style={{...S.iBtn,background:"transparent",border:"1px solid #000"}} onClick={function(e){e.stopPropagation();stopTimer();}}><StopIcon /></button>}
+                    </div>
+                    <ChevronIcon dir={expanded?"up":"down"} />
+                  </div>
+                </div>
+                <div style={S.expand(expanded)}>
+                  <div style={S.divider} />
+                  <div style={{fontSize:17,fontWeight:600}}>Всего: {fmt(totalSec)}{data.showEarnings?" ("+totalM+"р)":""}</div>
+                  <div style={S.divider} />
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {ps.slice(-5).reverse().map(function(se){return <div key={se.id} style={{display:"flex",justifyContent:"space-between",fontSize:17,fontWeight:500,opacity:0.55}}>
+                      <span>{se.date}</span><div style={{display:"flex",alignItems:"center",gap:10}}><span>{fmt(se.duration)}</span>
+                        <button style={{...S.iBtnSm,width:24,height:24,background:"transparent",opacity:0.4}} onClick={function(){deleteSession(se.id);}}><CloseIcon /></button></div>
+                    </div>;})}
+                  </div>
+                  <div style={S.divider} />
+                  <div style={{display:"flex",justifyContent:"space-between"}}>
+                    <button style={{background:"#fff",border:"none",borderRadius:13,padding:"9px 14px",fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:"inherit"}} onClick={function(e){e.stopPropagation();setAddTimePid(p.id);}}>Добавить время</button>
+                    <div style={{display:"flex",gap:5}}>
+                      <button style={S.iBtnSm} onClick={function(e){e.stopPropagation();deleteProject(p.id);}}><TrashIcon /></button>
+                      <button style={S.iBtnSm} onClick={function(e){e.stopPropagation();archiveProject(p.id);}}><ArchiveIcon /></button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>;
+          })}
+        </div>
+        {bulkMode&&bulkSel.length>0&&<div style={{display:"flex",gap:6,marginTop:10,flexShrink:0}}>
+          <button style={{...S.secondaryBtn,padding:"10px 0",fontSize:13,borderRadius:14,flex:1}} onClick={function(){bulkArchive(bulkSel);setBulkSel([]);setBulkMode(false);}}>Архив ({bulkSel.length})</button>
+          <button style={{...S.primaryBtn,padding:"10px 0",fontSize:13,borderRadius:14,flex:1,background:"#e53935"}} onClick={function(){bulkDelete(bulkSel);setBulkSel([]);setBulkMode(false);}}>Удалить ({bulkSel.length})</button>
+        </div>}
+      </div>
+
+      {/* Timer */}
+      <div style={{...S.card,...S.cardCenter}}>
+        <div style={{display:"flex",justifyContent:"space-between",width:"100%",flexShrink:0}}>
+          <span style={{fontSize:18,fontWeight:500}}>{selectedClient?data.clients.find(function(c){return c.id===selectedClient;})?.name:"Клиент"}</span>
+          <span style={{fontSize:18,fontWeight:500}}>{selectedProject?data.projects.find(function(p){return p.id===selectedProject;})?.name:"Проект"}</span>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
+          <div style={{...S.timer,animation:timerRunning&&!timerPaused?"timerPulse 2s ease infinite":"none",color:timerRunning?(timerPaused?"#999":"#000"):"#000"}}>{fmt(timerRunning?elapsed:0)}</div>
+          {data.showEarnings&&<div style={{display:"flex",gap:12,marginTop:20}}><div style={S.badge}>Всего: {currentMoney}р</div><div style={S.badge}>Налог: {Math.round(currentMoney*data.taxPercent/100)}р</div></div>}
+        </div>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
+          <div style={{display:"flex",gap:12}}>
+            <button style={S.startBtn} onClick={toggle}><span style={S.startTxt}>{!timerRunning?"START":timerPaused?"RESUME":"PAUSE"}</span>{!timerRunning||timerPaused?<PlayIcon size={24} />:<PauseIcon color="white" size={24} />}</button>
+            {timerRunning&&<button style={{...S.startBtn,background:"#e53935",padding:"22px 28px"}} onClick={stopTimer}><span style={S.startTxt}>STOP</span><StopIcon /></button>}
+          </div>
+          <button style={S.hideLink} onClick={function(){updateSettings({showEarnings:!data.showEarnings});}}>{data.showEarnings?"Скрыть заработок":"Показать заработок"}</button>
+        </div>
+      </div>
+
+      {/* History */}
+      <div style={S.card}>
+        <div style={S.cardHdr}><div style={S.cardTitle}>История</div>
+          {projectsWithHistory.length>0&&<button style={{...S.addBtn,background:"#ededed"}} onClick={function(){setHistBulk(!histBulk);setHistSel([]);}}>{histBulk?<CloseIcon />:<TrashIcon />}</button>}
+        </div>
+        <div style={S.list}>
+          {!projectsWithHistory.length&&<div style={{textAlign:"center",padding:40,opacity:0.3}}>Нет записей</div>}
+          {projectsWithHistory.map(function(p,i){
+            var ps=data.sessions.filter(function(s){return s.projectId===p.id;});
+            var totalSec=ps.reduce(function(a,s){return a+s.duration;},0);
+            if (histBulk) {
+              var on=histSel.indexOf(p.id)>=0;
+              return <div key={p.id} style={{...S.row,cursor:"pointer",background:on?"#e0e0e0":"#ededed",display:"flex",alignItems:"center",justifyContent:"space-between"}} onClick={function(){setHistSel(function(prev){return on?prev.filter(function(x){return x!==p.id;}):prev.concat([p.id]);});}}>
+                <div><div style={S.name}>{p.name}</div><div style={S.sub}>{fmt(totalSec)}{data.showEarnings?" ("+money(totalSec,data.rate)+"р)":""}</div></div>
+                <div style={{width:24,height:24,borderRadius:7,border:on?"none":"2px solid #ccc",background:on?"#000":"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>{on&&<CheckW />}</div>
+              </div>;
+            }
+            var expanded=expandedHistory===p.id;
+            return <div key={p.id} style={{animation:"fadeIn 0.3s ease "+(i*0.05)+"s both"}}>
+              <div style={S.row}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer"}} onClick={function(){setExpandedHistory(expanded?null:p.id);}}>
+                  <div><div style={S.name}>{p.name}</div><div style={S.sub}>Всего: {fmt(totalSec)}{data.showEarnings?" ("+money(totalSec,data.rate)+"р)":""}</div></div>
+                  <div style={S.ctrls}><button style={{...S.iBtn,background:"#000"}} onClick={function(e){e.stopPropagation();startTimer(p.id);setFilterClient(p.clientId);setExpandedProject(p.id);}}><PlayIcon /></button><ChevronIcon dir={expanded?"up":"down"} /></div>
+                </div>
+                <div style={S.expand(expanded)}><div style={S.divider} />
+                  {ps.slice().sort(function(a,b){return (b.timestamp||0)-(a.timestamp||0);}).slice(0,10).map(function(se){return <div key={se.id} style={{display:"flex",justifyContent:"space-between",fontSize:17,fontWeight:500,opacity:0.55}}><span>{se.date}</span><div style={{display:"flex",gap:16}}><span>{fmt(se.duration)}</span>{data.showEarnings&&<span>{money(se.duration,data.rate)}р</span>}</div></div>;})}
+                </div>
+              </div>
+            </div>;
+          })}
+        </div>
+        {histBulk&&histSel.length>0&&<div style={{display:"flex",gap:6,marginTop:10,flexShrink:0}}>
+          <button style={{...S.secondaryBtn,padding:"10px 0",fontSize:13,borderRadius:14,flex:1}} onClick={function(){bulkArchive(histSel);setHistSel([]);setHistBulk(false);}}>Архив ({histSel.length})</button>
+          <button style={{...S.primaryBtn,padding:"10px 0",fontSize:13,borderRadius:14,flex:1,background:"#e53935"}} onClick={function(){bulkDelete(histSel);setHistSel([]);setHistBulk(false);}}>Удалить ({histSel.length})</button>
+        </div>}
+      </div>
+    </main>
+
+    {/* Modals */}
+    {showSettings&&<div style={S.overlay} onClick={function(){setShowSettings(false);}}><div style={{...S.modal,width:480}} onClick={function(e){e.stopPropagation();}}>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:28}}><h3 style={{fontSize:24,fontWeight:900,fontStyle:"italic"}}>Настройки</h3><button onClick={function(){setShowSettings(false);}} style={{background:"none",border:"none",cursor:"pointer"}}><CloseIcon /></button></div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 0",borderBottom:"1px solid #eee"}}><span>Ставка (р/час)</span><input style={{width:120,padding:"10px 14px",border:"1.5px solid #ddd",borderRadius:12,fontSize:16,fontFamily:"inherit",outline:"none",textAlign:"right"}} type="number" defaultValue={data.rate} onBlur={function(e){var v=parseInt(e.target.value);if(v>0)updateSettings({rate:v});}} /></div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 0",borderBottom:"1px solid #eee"}}><span>Налог (%)</span><input style={{width:120,padding:"10px 14px",border:"1.5px solid #ddd",borderRadius:12,fontSize:16,fontFamily:"inherit",outline:"none",textAlign:"right"}} type="number" defaultValue={data.taxPercent} onBlur={function(e){var v=parseFloat(e.target.value);if(v>=0)updateSettings({taxPercent:v});}} /></div>
+    </div></div>}
+    {showAddProject&&<div style={S.overlay} onClick={function(){setShowAddProject(false);}}><div style={S.modal} onClick={function(e){e.stopPropagation();}}>
+      <h3 style={{fontSize:22,fontWeight:700,marginBottom:24}}>Новый проект</h3>
+      <input id="new-proj-name" style={{...S.input,marginBottom:16}} placeholder="Название" autoFocus />
+      <button style={S.primaryBtn} onClick={function(){var n=document.getElementById("new-proj-name").value.trim();if(n){addProject({id:uid(),name:n,clientId:selectedClient||data.clients[0]?.id});setShowAddProject(false);}}}>Создать</button>
+    </div></div>}
+    {addTimePid&&<div style={S.overlay} onClick={function(){setAddTimePid(null);}}><div style={S.modal} onClick={function(e){e.stopPropagation();}}>
+      <h3 style={{fontSize:22,fontWeight:700,marginBottom:24}}>Добавить время</h3>
+      <div style={{display:"flex",gap:12,marginBottom:24}}>
+        <div style={{flex:1}}><label style={{fontSize:13,opacity:0.6,display:"block",marginBottom:6}}>Часы</label><input id="add-h" style={S.input} type="number" min="0" /></div>
+        <div style={{flex:1}}><label style={{fontSize:13,opacity:0.6,display:"block",marginBottom:6}}>Минуты</label><input id="add-m" style={S.input} type="number" min="0" max="59" /></div>
+      </div>
+      <button style={S.primaryBtn} onClick={function(){var s=(parseInt(document.getElementById("add-h").value)||0)*3600+(parseInt(document.getElementById("add-m").value)||0)*60;if(s>0){saveSession(addTimePid,s);setAddTimePid(null);}}}>Добавить</button>
+    </div></div>}
+    {showAddClient&&<div style={S.overlay} onClick={function(){setShowAddClient(false);}}><div style={S.modal} onClick={function(e){e.stopPropagation();}}>
+      <h3 style={{fontSize:22,fontWeight:700,marginBottom:24}}>Новый клиент</h3>
+      <input id="new-client-name" style={{...S.input,marginBottom:24}} placeholder="Имя клиента" autoFocus />
+      <button style={S.primaryBtn} onClick={function(){var n=document.getElementById("new-client-name").value.trim();if(n){var cl={id:uid(),name:n};addClient(cl);setSelectedClient(cl.id);setShowAddClient(false);}}}>Создать</button>
+    </div></div>}
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
